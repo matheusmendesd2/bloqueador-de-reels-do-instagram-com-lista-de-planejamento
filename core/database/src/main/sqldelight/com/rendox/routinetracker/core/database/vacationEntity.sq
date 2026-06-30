@@ -1,0 +1,41 @@
+import kotlinx.datetime.LocalDate;
+
+CREATE TABLE vacationEntity (
+    habitId INTEGER NOT NULL,
+    startDate INTEGER AS LocalDate NOT NULL,
+    endDate INTEGER AS LocalDate,
+    PRIMARY KEY (habitId, startDate, endDate),
+    FOREIGN KEY (habitId) REFERENCES habitEntity(id) ON DELETE CASCADE
+);
+
+getAllVacations:
+SELECT * FROM vacationEntity
+WHERE habitId = ?;
+
+getVacationsInPeriod:
+SELECT * FROM vacationEntity
+WHERE habitId = :habitId
+    AND (endDate IS NULL OR :minDate <= endDate) AND :maxDate >= startDate
+ORDER BY startDate ASC;
+
+getMultiHabitVacations:
+SELECT * FROM vacationEntity
+WHERE (habitId IN :habitIds1
+            AND (endDate IS NULL OR :minDate1 <= endDate) AND :maxDate1 >= startDate) OR
+        (habitId IN :habitIds2
+            AND (endDate IS NULL OR :minDate2 <= endDate) AND :maxDate2 >= startDate) OR
+        (habitId IN :habitIds3
+            AND (endDate IS NULL OR :minDate3 <= endDate) AND :maxDate3 >= startDate) OR
+        (habitId IN :habitIds4
+            AND (endDate IS NULL OR :minDate4 <= endDate) AND :maxDate4 >= startDate) OR
+        (habitId IN :habitIds5
+            AND (endDate IS NULL OR :minDate5 <= endDate) AND :maxDate5 >= startDate)
+ORDER BY habitId ASC, startDate ASC;
+
+insertVacation:
+INSERT INTO vacationEntity
+VALUES (?, ?, ?);
+
+deleteAllVacationsForHabit:
+DELETE FROM vacationEntity
+WHERE habitId = ?;

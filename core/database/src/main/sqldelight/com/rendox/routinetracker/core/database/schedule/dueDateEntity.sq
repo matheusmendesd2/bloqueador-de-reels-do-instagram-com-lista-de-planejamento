@@ -1,0 +1,34 @@
+import kotlin.Int;
+
+CREATE TABLE dueDateEntity (
+    scheduleId INTEGER NOT NULL,
+    dueDateNumber INTEGER AS Int NOT NULL,
+    completionTimeHour INTEGER AS Int,
+    completionTimeMinute INTEGER AS Int,
+    PRIMARY KEY (scheduleId, dueDateNumber),
+    FOREIGN KEY (scheduleId) REFERENCES scheduleEntity(id) ON DELETE CASCADE
+);
+
+getDueDates:
+SELECT dueDateNumber
+FROM dueDateEntity
+WHERE scheduleId = ?
+ORDER BY dueDateNumber ASC;
+
+getCompletionTime:
+SELECT completionTimeHour, completionTimeMinute
+FROM dueDateEntity
+WHERE scheduleId = ? AND dueDateNumber = ?;
+
+updateCompletionTime:
+UPDATE dueDateEntity
+SET completionTimeHour = ?, completionTimeMinute = ?
+WHERE scheduleId = ? AND dueDateNumber = ?;
+
+insertDueDate:
+INSERT INTO dueDateEntity
+VALUES (?, ?, ?, ?);
+
+deleteDueDates:
+DELETE FROM dueDateEntity
+WHERE scheduleId = ?;

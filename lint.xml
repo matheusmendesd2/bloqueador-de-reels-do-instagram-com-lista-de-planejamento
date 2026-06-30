@@ -1,0 +1,6 @@
+<lint>
+    <issue id="AndroidGradlePluginVersion" severity="informational" />
+    <issue id="GradleDependency" severity="informational" />
+    <issue id="NewerVersionAvailable" severity="informational" />
+    <issue id="SyntheticAccessor" severity="informational" />
+</lint>

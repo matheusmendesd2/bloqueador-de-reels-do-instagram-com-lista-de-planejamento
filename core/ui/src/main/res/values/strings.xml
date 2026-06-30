@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="save">save</string>
+    <string name="today">Today</string>
+    <string name="back">back</string>
+    <string name="next">next</string>
+    <string name="delete">delete</string>
+
+    <plurals name="num_of_days">
+        <item quantity="one">day</item>
+        <item quantity="other">days</item>
+    </plurals>
+
+    <plurals name="num_of_weeks">
+        <item quantity="one">week</item>
+        <item quantity="other">weeks</item>
+    </plurals>
+
+    <plurals name="num_of_months">
+        <item quantity="one">%month</item>
+        <item quantity="other">months</item>
+    </plurals>
+
+    <plurals name="num_of_years">
+        <item quantity="one">year</item>
+        <item quantity="other">years</item>
+    </plurals>
+
+    <string name="frequency_every_day">Every day</string>
+    <string name="frequency_daily">per day</string>
+    <string name="frequency_weekly">per week</string>
+    <string name="frequency_monthly">per month</string>
+    <string name="frequency_annually">per year</string>
+    <string name="frequency_activity">activity</string>
+    <string name="frequency_rest">rest</string>
+
+    <string name="calendar_left_navigation_icon_content_description">Navigate to the previous month</string>
+    <string name="calendar_right_navigation_icon_content_description">Navigate to the next month</string>
+
+    <string name="date_picker_supporting_text">Select date</string>
+
+    <string name="habit_status_planned">Planned</string>
+    <string name="habit_status_backlog">Backlog</string>
+    <string name="habit_status_not_due">Not due</string>
+    <string name="habit_status_already_completed">Already completed</string>
+    <string name="habit_status_completed_later">Completed later</string>
+    <string name="habit_status_completed">Completed</string>
+    <string name="habit_status_partially_completed">Partially completed</string>
+    <string name="habit_status_over_completed">Over completed</string>
+    <string name="habit_status_sorted_out_backlog">Sorted out backlog</string>
+    <string name="habit_status_failed">Failed</string>
+    <string name="habit_status_on_vacation">Skipped</string>
+    <string name="habit_status_not_started">Not started</string>
+    <string name="habit_status_finished">Finished</string>
+
+    <string name="finished_date_completion_attempt_snackbar_message">"The habit is finished on this date."</string>
+    <string name="not_started_date_completion_attempt_snackbar_message">"The habit is not started on this date."</string>
+    <string name="future_date_completion_attempt_snackbar_message">"Habits can’t be completed on future dates."</string>
+    <string name="toggle_dropdown_menu_visibility">Toggle dropdown menu visibility\n</string>
+</resources>

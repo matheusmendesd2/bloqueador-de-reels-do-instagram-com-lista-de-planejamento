@@ -1,0 +1,46 @@
+import kotlin.Float;
+import kotlinx.datetime.LocalDate;
+
+CREATE TABLE completionHistoryEntity (
+    habitId INTEGER NOT NULL,
+    date INTEGER AS LocalDate NOT NULL,
+    numOfTimesCompleted REAL AS Float NOT NULL,
+    PRIMARY KEY (habitId, date),
+    FOREIGN KEY (habitId) REFERENCES habitEntity(id) ON DELETE CASCADE
+);
+
+insertCompletion:
+INSERT OR REPLACE
+INTO completionHistoryEntity
+VALUES (?, ?, ?);
+
+getRecordsInPeriod:
+SELECT *
+FROM completionHistoryEntity
+WHERE habitId = :habitId
+    AND (:minDate IS NULL OR :minDate <= date)
+    AND (:maxDate IS NULL OR date <= :maxDate)
+ORDER BY date ASC;
+
+getMultiHabitRecords:
+SELECT * FROM completionHistoryEntity
+WHERE (habitId IN :habitIds1 AND (:minDate1 <= date) AND (date <= :maxDate1)) OR
+    (habitId IN :habitIds2 AND (:minDate2 <= date) AND (date <= :maxDate2)) OR
+    (habitId IN :habitIds3 AND (:minDate3 <= date) AND (date <= :maxDate3)) OR
+    (habitId IN :habitIds4 AND (:minDate4 <= date) AND (date <= :maxDate4)) OR
+    (habitId IN :habitIds5 AND (:minDate5 <= date) AND (date <= :maxDate5))
+ORDER BY habitId ASC, date ASC;
+
+getRecordsWithoutStreaks:
+SELECT ch.* FROM completionHistoryEntity ch
+LEFT JOIN cachedStreakEntity cs
+ON ch.habitId = cs.habitId AND ch.date BETWEEN cs.startDate AND cs.endDate
+WHERE ch.habitId = :habitId AND cs.habitId IS NULL;
+
+deleteCompletionByDate:
+DELETE FROM completionHistoryEntity
+WHERE habitId = ? AND date = ?;
+
+deleteAllCompletionsForHabit:
+DELETE FROM completionHistoryEntity
+WHERE habitId = ?;
