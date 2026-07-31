@@ -2,7 +2,9 @@ package com.rendox.routinetracker.core.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -105,10 +107,20 @@ fun RoutineTrackerTheme(
     ) {
         MaterialTheme(
             colorScheme = colors,
+            shapes = AppShapes,
             content = content,
         )
     }
 }
+
+/** Cantos mais arredondados que o padrao do Material, para um visual mais macio. */
+private val AppShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(22.dp),
+    extraLarge = RoundedCornerShape(30.dp),
+)
 
 fun ColorScheme.darkenSurface(): ColorScheme = this.copy(
     surface = surfaceColorAtElevation(1.dp),

@@ -1,3 +1,5 @@
 <resources>
-    <color name="seed">#6750A4</color>
+    <color name="seed">#4B3FD1</color>
+    <!-- Fundo da janela antes do Compose desenhar, evita o flash branco na abertura. -->
+    <color name="app_window_background">#FBF8FF</color>
 </resources>

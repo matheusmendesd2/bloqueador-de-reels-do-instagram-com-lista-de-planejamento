@@ -3,11 +3,19 @@ package com.rendox.routineblocker.feature.shortsblocker.services
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.annotation.SuppressLint
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
+import android.widget.Toast
+import com.rendox.routineblocker.feature.shortsblocker.models.AppSchedule
+import com.rendox.routineblocker.feature.shortsblocker.models.BlockAction
+import com.rendox.routineblocker.feature.shortsblocker.models.BlockReason
+import com.rendox.routineblocker.feature.shortsblocker.models.BlockerSettings
 import com.rendox.routineblocker.feature.shortsblocker.services.detectors.InstagramReelsDetector
 import com.rendox.routineblocker.feature.shortsblocker.services.detectors.ShortFormContentDetector
 import com.rendox.routineblocker.feature.shortsblocker.services.detectors.YouTubeShortsDetector
+import com.rendox.routineblocker.feature.shortsblocker.utils.PackageConstants
 import com.rendox.routineblocker.feature.shortsblocker.utils.UserPreferencesProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,169 +27,264 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Aplica as regras configuradas pelo usuario.
+ *
+ * Duas camadas de bloqueio, avaliadas nesta ordem:
+ *  1. abertura do app - dias totalmente bloqueados e faixas de horario permitidas
+ *  2. conteudo curto - Reels/Shorts bloqueados, liberados ou limitados por cota
+ */
 @SuppressLint("AccessibilityPolicy")
 class ShortFormContentBlockerService : AccessibilityService() {
-    private val lastActionTimestamps = ConcurrentHashMap<String, Long>()
-    private val actionCooldownMillis = 1500L
-    private val userPreferencesProvider by lazy { UserPreferencesProvider(applicationContext) }
+
+    private companion object {
+        const val ACTION_COOLDOWN_MILLIS = 1_500L
+        const val HEARTBEAT_INTERVAL_MILLIS = 20_000L
+        const val SHORTS_SESSION_TIMEOUT_MILLIS = 90_000L
+        const val NO_MONITORED_PACKAGE_PLACEHOLDER = "com.rendox.routineblocker.nenhum"
+    }
+
+    private val preferences by lazy { UserPreferencesProvider(applicationContext) }
     private val job = SupervisorJob()
     private val coroutineScope = CoroutineScope(Dispatchers.IO + job)
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
     private val detectors: Map<String, ShortFormContentDetector> by lazy {
         mapOf(
-            "com.google.android.youtube" to YouTubeShortsDetector(),
-            "com.instagram.android" to InstagramReelsDetector(),
+            PackageConstants.YOUTUBE_PACKAGE to YouTubeShortsDetector(),
+            PackageConstants.INSTAGRAM_PACKAGE to InstagramReelsDetector(),
         )
     }
 
-    private var allowedDays: Set<Int> = emptySet()
-    private var dailyQuotaMinutes: Int = 0
-    private var usedMinutesToday: Int = 0
-    private var reelsActive = false
-    private var lastDetectionTime: Long = 0L
-    private var appBlockEnabled = false
-    private var appBlockedDays: Set<Int> = emptySet()
-    private var blockerEnabled = true
+    private val lastActionTimestamps = ConcurrentHashMap<String, Long>()
+
+    @Volatile private var settings = BlockerSettings()
+    @Volatile private var schedules: Map<String, AppSchedule> = emptyMap()
+    @Volatile private var usageToday: Map<String, Int> = emptyMap()
+
+    /** Pacote em primeiro plano, usado para reavaliar as regras fora dos eventos. */
+    @Volatile private var foregroundPackage: String? = null
+
+    /** Pacote cujo conteudo curto esta sendo assistido agora. */
+    @Volatile private var shortsActivePackage: String? = null
+
+    @Volatile private var lastShortsDetectionUptime = 0L
+    private var accumulatedSeconds = 0
 
     override fun onServiceConnected() {
-        userPreferencesProvider.getTrackedPackages()
-            .onEach { packages ->
-                val info = AccessibilityServiceInfo().apply {
-                    eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                    feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-                    flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-                    packageNames = packages.toTypedArray()
-                    notificationTimeout = 100
-                }
-                serviceInfo = info
-            }
-            .catch { error ->
-                Timber.e(error, "Error fetching tracked packages")
-            }
+        coroutineScope.launch {
+            preferences.migrateLegacySettingsIfNeeded()
+            preferences.resetUsageIfNewDay()
+        }
+
+        preferences.monitoredPackages
+            .onEach { packages -> applyServiceInfo(packages) }
+            .catch { error -> Timber.e(error, "Falha ao aplicar os pacotes monitorados") }
             .launchIn(coroutineScope)
 
-        userPreferencesProvider.getAllowedDays()
-            .onEach { allowedDays = it }
+        preferences.settings
+            .onEach { settings = it }
+            .catch { error -> Timber.e(error, "Falha ao ler as configuracoes") }
             .launchIn(coroutineScope)
 
-        userPreferencesProvider.getDailyQuotaMinutes()
-            .onEach { dailyQuotaMinutes = it }
+        preferences.schedules
+            .onEach { list -> schedules = list.associateBy { it.packageName } }
+            .catch { error -> Timber.e(error, "Falha ao ler as agendas") }
             .launchIn(coroutineScope)
 
-        userPreferencesProvider.getUsedMinutesToday()
-            .onEach { usedMinutesToday = it }
+        preferences.usageToday
+            .onEach { usageToday = it }
+            .catch { error -> Timber.e(error, "Falha ao ler o consumo do dia") }
             .launchIn(coroutineScope)
 
-        userPreferencesProvider.getAppBlockEnabled()
-            .onEach { appBlockEnabled = it }
-            .launchIn(coroutineScope)
+        startHeartbeat()
+    }
 
-        userPreferencesProvider.getAppBlockedDays()
-            .onEach { appBlockedDays = it }
-            .launchIn(coroutineScope)
-
-        userPreferencesProvider.getBlockerEnabled()
-            .onEach { blockerEnabled = it }
-            .launchIn(coroutineScope)
-
-        startUsageHeartbeat()
+    private fun applyServiceInfo(packages: List<String>) {
+        val watched = packages.ifEmpty { listOf(NO_MONITORED_PACKAGE_PLACEHOLDER) }
+        serviceInfo = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            packageNames = watched.toTypedArray()
+            notificationTimeout = 100
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            !(event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-                event.contentChangeTypes and AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE != 0)
-        ) return
 
-        val packageName = event.packageName?.toString()
+        val isWindowChange = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        val isRelevantContentChange =
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+                event.contentChangeTypes and AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE != 0
+        if (!isWindowChange && !isRelevantContentChange) return
 
-        if (packageName != null && appBlockEnabled) {
-            val today = LocalDate.now().dayOfWeek.value
-            val appBlockKey = "${packageName}_app_block"
-            val trackedForBlock = detectors.containsKey(packageName)
-            if (trackedForBlock && today in appBlockedDays && shouldPerformAction(appBlockKey)) {
-                Timber.i("[$packageName] Blocking app launch (blocked day $today)")
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                return
-            }
+        val packageName = event.packageName?.toString() ?: return
+        if (isWindowChange && packageName != foregroundPackage) {
+            // trocou de app: a sessao de conteudo curto anterior acabou
+            endShortsSession()
+            foregroundPackage = packageName
         }
 
-        val detector = packageName?.let { detectors[it] }
+        val schedule = schedules[packageName]
+        if (schedule == null || !schedule.monitored) return
+        if (!settings.isActive(System.currentTimeMillis())) return
 
-        if (detector == null) {
-            reelsActive = false
+        // 1) abertura do app
+        val accessReason = schedule.appAccessReason(currentDayOfWeek(), currentMinuteOfDay())
+        if (accessReason != BlockReason.NENHUM) {
+            endShortsSession()
+            block(packageName, accessReason)
             return
         }
 
-        if (!blockerEnabled) {
-            reelsActive = false
-            return
+        // 2) conteudo curto dentro do app
+        val detector = detectors[packageName] ?: return
+        val isWatchingShortForm = windows.any { window ->
+            if (!window.isFocused || !window.isActive) return@any false
+            val root = window.root ?: return@any false
+            detector.isShortFormContent(event, root, resources)
         }
+        // Uma deteccao negativa isolada nao encerra a sessao - o Instagram dispara muitos
+        // eventos intermediarios. Quem encerra e o timeout do heartbeat.
+        if (!isWatchingShortForm) return
 
-        val windows = windows
-        for (win in windows) {
-            if (!win.isFocused || !win.isActive) continue
-            val root = win.root ?: continue
-
-            if (detector.isShortFormContent(event, root, resources)) {
-                val key = "${packageName}_content_detected"
-                if (!shouldPerformAction(key)) return
-
-                if (shouldBlock()) {
-                    Timber.i("[$packageName] Blocking short-form content!")
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                    reelsActive = false
-                } else {
-                    reelsActive = true
-                    lastDetectionTime = SystemClock.uptimeMillis()
-                    Timber.i("[$packageName] Allowing (quota remaining)")
-                }
-                break
-            }
+        val shortsReason = schedule.shortsReason(
+            dayOfWeek = currentDayOfWeek(),
+            usedMinutesToday = usageToday[packageName] ?: 0,
+        )
+        if (shortsReason != BlockReason.NENHUM) {
+            endShortsSession()
+            block(packageName, shortsReason)
+        } else {
+            shortsActivePackage = packageName
+            lastShortsDetectionUptime = SystemClock.uptimeMillis()
         }
     }
 
     override fun onInterrupt() {
-        Timber.w("ShortFormContentBlockerService interrupted")
+        Timber.w("Servico de bloqueio interrompido")
     }
 
-    private fun startUsageHeartbeat() {
+    override fun onDestroy() {
+        super.onDestroy()
+        job.cancel()
+    }
+
+    /**
+     * Roda em paralelo aos eventos e cuida de duas coisas que eventos nao resolvem:
+     * contar os minutos consumidos e expulsar o usuario quando a janela de horario acaba.
+     */
+    private fun startHeartbeat() {
         coroutineScope.launch {
-            userPreferencesProvider.resetUsedMinutesIfNewDay()
+            var lastKnownDate = LocalDate.now()
             while (isActive) {
-                delay(60_000L)
-                if (reelsActive) {
-                    val elapsedSinceLastDetection = SystemClock.uptimeMillis() - lastDetectionTime
-                    if (elapsedSinceLastDetection >= 120_000L) {
-                        Timber.d("No Reels detection for 2min, ending session")
-                        reelsActive = false
-                    } else {
-                        Timber.d("Adding 1 min to daily usage")
-                        userPreferencesProvider.incrementUsedMinutes(1)
-                    }
+                delay(HEARTBEAT_INTERVAL_MILLIS)
+
+                val today = LocalDate.now()
+                if (today != lastKnownDate) {
+                    lastKnownDate = today
+                    accumulatedSeconds = 0
+                    preferences.resetUsageIfNewDay()
                 }
+
+                if (!settings.isActive(System.currentTimeMillis())) continue
+
+                accumulateShortsUsage()
+                enforceScheduleOnForegroundApp()
             }
         }
     }
 
-    private fun shouldBlock(): Boolean {
-        val today = LocalDate.now().dayOfWeek.value
-        if (today !in allowedDays) return true
-        if (dailyQuotaMinutes <= 0) return true
-        return usedMinutesToday >= dailyQuotaMinutes
+    private suspend fun accumulateShortsUsage() {
+        val packageName = shortsActivePackage ?: return
+        val idleMillis = SystemClock.uptimeMillis() - lastShortsDetectionUptime
+        if (idleMillis >= SHORTS_SESSION_TIMEOUT_MILLIS) {
+            Timber.d("Sessao de conteudo curto encerrada por inatividade")
+            endShortsSession()
+            return
+        }
+        accumulatedSeconds += (HEARTBEAT_INTERVAL_MILLIS / 1000).toInt()
+        while (accumulatedSeconds >= 60) {
+            accumulatedSeconds -= 60
+            preferences.incrementUsedMinutes(packageName, 1)
+            Timber.d("[$packageName] +1 min de consumo hoje")
+        }
+    }
+
+    /**
+     * Aplica o fim de uma janela de horario mesmo sem novos eventos de acessibilidade.
+     *
+     * O pacote vem da janela ativa de verdade, e nao do ultimo evento recebido: como o
+     * servico so recebe eventos dos apps monitorados, o ultimo evento pode ser de um app
+     * que o usuario ja fechou.
+     */
+    private fun enforceScheduleOnForegroundApp() {
+        val packageName = runCatching { rootInActiveWindow?.packageName?.toString() }
+            .getOrNull()
+            ?: return
+        foregroundPackage = packageName
+        val schedule = schedules[packageName] ?: return
+        if (!schedule.monitored) return
+        val reason = schedule.appAccessReason(currentDayOfWeek(), currentMinuteOfDay())
+        if (reason != BlockReason.NENHUM) {
+            endShortsSession()
+            block(packageName, reason)
+        }
+    }
+
+    private fun endShortsSession() {
+        shortsActivePackage = null
+        accumulatedSeconds = 0
+    }
+
+    private fun block(packageName: String, reason: BlockReason) {
+        if (!shouldPerformAction("$packageName:${reason.name}")) return
+        Timber.i("[$packageName] Bloqueando: $reason")
+
+        val action = when (settings.blockAction) {
+            BlockAction.VOLTAR -> GLOBAL_ACTION_BACK
+            BlockAction.TELA_INICIAL -> GLOBAL_ACTION_HOME
+        }
+        performGlobalAction(action)
+
+        if (settings.showBlockWarning) {
+            showWarning(packageName, reason)
+        }
+    }
+
+    private fun showWarning(packageName: String, reason: BlockReason) {
+        val appName = PackageConstants.displayNameOf(packageName)
+        val shortFormName = PackageConstants.shortFormNameOf(packageName)
+        val detail = when (reason) {
+            BlockReason.APP_BLOQUEADO_HOJE -> "$appName está bloqueado hoje"
+            BlockReason.FORA_DA_JANELA -> "$appName está fora do horário liberado"
+            BlockReason.SHORTS_BLOQUEADO -> "$shortFormName estão bloqueados hoje"
+            BlockReason.COTA_ESGOTADA -> "Cota de $shortFormName de hoje esgotada"
+            BlockReason.NENHUM -> return
+        }
+        val message = "$detail\n${settings.blockMessage}"
+        mainHandler.post {
+            Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun shouldPerformAction(key: String): Boolean {
         val now = SystemClock.uptimeMillis()
         val last = lastActionTimestamps[key] ?: 0L
-        if (now - last < actionCooldownMillis) return false
+        if (now - last < ACTION_COOLDOWN_MILLIS) return false
         lastActionTimestamps[key] = now
         return true
     }
+
+    private fun currentDayOfWeek(): Int = LocalDate.now().dayOfWeek.value
+
+    private fun currentMinuteOfDay(): Int = LocalTime.now().let { it.hour * 60 + it.minute }
 }

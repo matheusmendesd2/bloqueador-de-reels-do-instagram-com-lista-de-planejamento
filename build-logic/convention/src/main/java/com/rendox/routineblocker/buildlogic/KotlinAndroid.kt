@@ -16,6 +16,9 @@ internal fun Project.configureKotlinAndroid(
         compileOptions {
             sourceCompatibility = JavaVersion.VERSION_11
             targetCompatibility = JavaVersion.VERSION_17
+            // java.time e usado no bloqueador e o minSdk e 24, entao o desugaring
+            // precisa estar ligado de verdade - nao basta declarar a dependencia.
+            isCoreLibraryDesugaringEnabled = true
         }
     }
 

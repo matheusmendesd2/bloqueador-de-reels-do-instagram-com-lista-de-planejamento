@@ -7,10 +7,15 @@ import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.rendox.routineblocker.feature.shortsblocker.models.TrackedPackage
+import com.rendox.routineblocker.feature.shortsblocker.models.AppSchedule
+import com.rendox.routineblocker.feature.shortsblocker.models.BlockAction
+import com.rendox.routineblocker.feature.shortsblocker.models.BlockReason
+import com.rendox.routineblocker.feature.shortsblocker.models.BlockerSettings
+import com.rendox.routineblocker.feature.shortsblocker.models.DaySchedule
+import com.rendox.routineblocker.feature.shortsblocker.models.TimeWindow
+import com.rendox.routineblocker.feature.shortsblocker.security.AdminReceiver
 import com.rendox.routineblocker.feature.shortsblocker.security.PasswordUtils
 import com.rendox.routineblocker.feature.shortsblocker.utils.AccessibilityServiceManager
-import com.rendox.routineblocker.feature.shortsblocker.utils.PackageConstants
 import com.rendox.routineblocker.feature.shortsblocker.utils.UserPreferencesProvider
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -22,152 +27,162 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.time.LocalDate
+import java.time.LocalTime
 
 data class BlockerUiState(
     val isServiceEnabled: Boolean = false,
-    val isCheckingService: Boolean = false,
-    val trackedPackages: List<TrackedPackage> = emptyList(),
     val isOnboardingCompleted: Boolean = false,
     val showDisclosure: Boolean = false,
-    val allowedDays: Set<Int> = emptySet(),
-    val dailyQuotaMinutes: Int = 0,
-    val usedMinutesToday: Int = 0,
-    val appBlockEnabled: Boolean = false,
-    val appBlockedDays: Set<Int> = emptySet(),
-    val blockerEnabled: Boolean = true,
+    val settings: BlockerSettings = BlockerSettings(),
+    val schedules: List<AppSchedule> = emptyList(),
+    val usageToday: Map<String, Int> = emptyMap(),
     val hasPassword: Boolean = false,
     val isUnlocked: Boolean = false,
     val passwordError: String? = null,
     val passwordChangedSuccessfully: Boolean = false,
     val isDeviceAdminActive: Boolean = false,
-)
+    val today: Int = LocalDate.now().dayOfWeek.value,
+    val minuteOfDay: Int = 0,
+    val nowEpochMillis: Long = 0L,
+) {
+    /** As configuracoes estao travadas por senha? */
+    val isLocked: Boolean
+        get() = hasPassword && !isUnlocked
+
+    val isPaused: Boolean
+        get() = settings.isPaused(nowEpochMillis)
+
+    val pauseRemainingMinutes: Int
+        get() = settings.pauseRemainingMinutes(nowEpochMillis)
+
+    /** A protecao esta valendo neste instante (ligada e sem pausa ativa)? */
+    val isProtectionActiveNow: Boolean
+        get() = settings.isActive(nowEpochMillis)
+
+    val monitoredSchedules: List<AppSchedule>
+        get() = schedules.filter { it.monitored }
+
+    fun scheduleFor(packageName: String): AppSchedule =
+        schedules.firstOrNull { it.packageName == packageName }
+            ?: AppSchedule(packageName = packageName)
+
+    fun usedMinutes(packageName: String): Int = usageToday[packageName] ?: 0
+
+    /** Algum app monitorado esta com a abertura bloqueada neste momento. */
+    val hasActiveAppBlockNow: Boolean
+        get() = monitoredSchedules.any {
+            it.appAccessReason(today, minuteOfDay) != BlockReason.NENHUM
+        }
+
+    /**
+     * O modo rigido impede afrouxar a protecao enquanto um bloqueio de abertura
+     * estiver valendo. Como esses bloqueios sempre tem hora para acabar, o usuario
+     * nunca fica preso.
+     */
+    val canRelaxProtection: Boolean
+        get() = !settings.strictMode || !hasActiveAppBlockNow
+
+    /** Pode editar configuracoes agora? */
+    val canEdit: Boolean
+        get() = !isLocked
+}
 
 class BlockerViewModel(
     application: Application,
-    private val prefs: UserPreferencesProvider,
+    private val preferences: UserPreferencesProvider,
 ) : AndroidViewModel(application) {
-    companion object {
-        private const val SERVICE_NAME = "com.rendox.routineblocker" +
+
+    private companion object {
+        const val SERVICE_NAME = "com.rendox.routineblocker" +
             "/com.rendox.routineblocker.feature.shortsblocker.services.ShortFormContentBlockerService"
+        const val CLOCK_TICK_MILLIS = 15_000L
+        const val SERVICE_POLL_MILLIS = 1_000L
+        const val MIN_PASSWORD_LENGTH = 4
     }
 
     private val _state = MutableStateFlow(BlockerUiState())
     val state: StateFlow<BlockerUiState> = _state.asStateFlow()
-    private var isMonitoring = false
+
     private var unlockJob: Job? = null
+    private var serviceWatchJob: Job? = null
+
     private val devicePolicyManager: DevicePolicyManager by lazy {
-        getApplication<Application>().getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        getApplication<Application>()
+            .getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     }
     private val adminComponent: ComponentName by lazy {
-        ComponentName(getApplication(), com.rendox.routineblocker.feature.shortsblocker.security.AdminReceiver::class.java)
+        ComponentName(getApplication(), AdminReceiver::class.java)
     }
 
     init {
-        Timber.d("BlockerViewModel initialized")
-        observeOnboardingState()
-        observeTrackedPackages()
-        observeAllowedDays()
-        observeDailyQuota()
-        observeUsedMinutes()
-        observeAppBlockEnabled()
-        observeAppBlockedDays()
-        observeBlockerEnabled()
-        observePasswordHash()
-        checkDeviceAdmin()
+        viewModelScope.launch { preferences.migrateLegacySettingsIfNeeded() }
+        observePreferences()
+        startClock()
+        refreshDeviceAdminStatus()
     }
 
-    private fun observeOnboardingState() {
+    private fun observePreferences() {
         viewModelScope.launch {
-            prefs.getOnboardingCompleted().collect { completed ->
+            preferences.onboardingCompleted.collect { completed ->
                 _state.update { it.copy(isOnboardingCompleted = completed) }
             }
         }
-    }
-
-    private fun observeTrackedPackages() {
         viewModelScope.launch {
-            prefs.getTrackedPackagesWithStatus().collect { packages ->
-                _state.update { it.copy(trackedPackages = packages) }
+            preferences.settings.collect { settings ->
+                _state.update { it.copy(settings = settings) }
+            }
+        }
+        viewModelScope.launch {
+            preferences.schedules.collect { schedules ->
+                _state.update { it.copy(schedules = schedules) }
+            }
+        }
+        viewModelScope.launch {
+            preferences.usageToday.collect { usage ->
+                _state.update { it.copy(usageToday = usage) }
+            }
+        }
+        viewModelScope.launch {
+            preferences.passwordHash.collect { hash ->
+                _state.update { current ->
+                    current.copy(
+                        hasPassword = hash != null,
+                        isUnlocked = if (hash == null) false else current.isUnlocked,
+                    )
+                }
             }
         }
     }
 
-    private fun observeAllowedDays() {
+    /** Mantem o estado ciente da hora atual para os cartoes de status ao vivo. */
+    private fun startClock() {
         viewModelScope.launch {
-            prefs.getAllowedDays().collect { days ->
-                Timber.d("Allowed days updated: $days")
-                _state.update { it.copy(allowedDays = days) }
+            while (isActive) {
+                val now = LocalTime.now()
+                _state.update {
+                    it.copy(
+                        today = LocalDate.now().dayOfWeek.value,
+                        minuteOfDay = now.hour * 60 + now.minute,
+                        nowEpochMillis = System.currentTimeMillis(),
+                    )
+                }
+                delay(CLOCK_TICK_MILLIS)
             }
         }
     }
 
-    private fun observeDailyQuota() {
-        viewModelScope.launch {
-            prefs.getDailyQuotaMinutes().collect { quota ->
-                Timber.d("Daily quota updated: $quota")
-                _state.update { it.copy(dailyQuotaMinutes = quota) }
-            }
-        }
-    }
+    // ---------------------------------------------------------------- onboarding
 
-    private fun observeUsedMinutes() {
+    fun completeOnboarding() {
         viewModelScope.launch {
-            prefs.getUsedMinutesToday().collect { used ->
-                Timber.d("Used minutes today: $used")
-                _state.update { it.copy(usedMinutesToday = used) }
-            }
-        }
-    }
-
-    private fun observeAppBlockEnabled() {
-        viewModelScope.launch {
-            prefs.getAppBlockEnabled().collect { enabled ->
-                _state.update { it.copy(appBlockEnabled = enabled) }
-            }
-        }
-    }
-
-    private fun observeAppBlockedDays() {
-        viewModelScope.launch {
-            prefs.getAppBlockedDays().collect { days ->
-                _state.update { it.copy(appBlockedDays = days) }
-            }
-        }
-    }
-
-    private fun observeBlockerEnabled() {
-        viewModelScope.launch {
-            prefs.getBlockerEnabled().collect { enabled ->
-                _state.update { it.copy(blockerEnabled = enabled) }
-            }
-        }
-    }
-
-    private fun observePasswordHash() {
-        viewModelScope.launch {
-            prefs.getPasswordHash().collect { hash ->
-                _state.update { it.copy(hasPassword = hash != null) }
-            }
-        }
-    }
-
-    private fun checkDeviceAdmin() {
-        viewModelScope.launch {
-            _state.update { it.copy(isDeviceAdminActive = devicePolicyManager.isAdminActive(adminComponent)) }
-        }
-    }
-
-    fun completeOnboarding(context: Context) {
-        viewModelScope.launch {
-            prefs.setOnboardingCompleted(true)
+            preferences.setOnboardingCompleted(true)
             _state.update { it.copy(showDisclosure = true) }
         }
     }
 
     fun acceptDisclosure(context: Context) {
-        viewModelScope.launch {
-            prefs.setDisclosureAccepted(true)
-        }
+        viewModelScope.launch { preferences.setDisclosureAccepted(true) }
         _state.update { it.copy(showDisclosure = false) }
         openAccessibilitySettings(context)
     }
@@ -176,105 +191,164 @@ class BlockerViewModel(
         _state.update { it.copy(showDisclosure = false) }
     }
 
+    // ---------------------------------------------------------------- servico
+
     fun checkServiceStatus(context: Context) {
-        viewModelScope.launch {
-            _state.update { it.copy(isCheckingService = true) }
-            val isGranted = AccessibilityServiceManager.isAccessibilityServiceEnabled(context, SERVICE_NAME)
-            _state.update { it.copy(isServiceEnabled = isGranted, isCheckingService = false) }
-        }
+        val isGranted = AccessibilityServiceManager.isAccessibilityServiceEnabled(
+            context = context,
+            serviceName = SERVICE_NAME,
+        )
+        _state.update { it.copy(isServiceEnabled = isGranted) }
     }
 
     fun openAccessibilitySettings(context: Context) {
         AccessibilityServiceManager.openAccessibilitySettings(context)
-        startMonitoring(context)
+        watchForServiceActivation(context)
     }
 
-    private fun startMonitoring(context: Context) {
-        if (isMonitoring) return
-        isMonitoring = true
-        viewModelScope.launch {
-            while (isActive && isMonitoring) {
-                delay(1000L)
+    private fun watchForServiceActivation(context: Context) {
+        serviceWatchJob?.cancel()
+        serviceWatchJob = viewModelScope.launch {
+            repeat(120) {
+                delay(SERVICE_POLL_MILLIS)
                 checkServiceStatus(context)
-                if (_state.value.isServiceEnabled) {
-                    isMonitoring = false
-                    break
-                }
+                if (_state.value.isServiceEnabled) return@launch
             }
         }
     }
 
-    fun togglePackage(packageName: String, enabled: Boolean) {
+    // ---------------------------------------------------------------- protecao
+
+    fun setProtectionEnabled(enabled: Boolean) {
+        if (!enabled && !_state.value.canRelaxProtection) {
+            Timber.d("Modo rigido impede desligar a protecao agora")
+            return
+        }
+        viewModelScope.launch { preferences.setProtectionEnabled(enabled) }
+    }
+
+    fun pauseFor(minutes: Int) {
+        if (!_state.value.canRelaxProtection) return
         viewModelScope.launch {
-            prefs.togglePackage(packageName, enabled)
+            preferences.pauseUntil(System.currentTimeMillis() + minutes * 60_000L)
         }
     }
 
-    fun updateAllowedDays(days: Set<Int>) {
-        viewModelScope.launch {
-            prefs.setAllowedDays(days)
+    fun cancelPause() {
+        viewModelScope.launch { preferences.cancelPause() }
+    }
+
+    fun setBlockAction(action: BlockAction) {
+        viewModelScope.launch { preferences.setBlockAction(action) }
+    }
+
+    fun setShowBlockWarning(show: Boolean) {
+        viewModelScope.launch { preferences.setShowBlockWarning(show) }
+    }
+
+    fun setBlockMessage(message: String) {
+        viewModelScope.launch { preferences.setBlockMessage(message) }
+    }
+
+    fun setStrictMode(enabled: Boolean) {
+        if (!enabled && !_state.value.canRelaxProtection) return
+        viewModelScope.launch { preferences.setStrictMode(enabled) }
+    }
+
+    fun setUnlockDurationMinutes(minutes: Int) {
+        viewModelScope.launch { preferences.setUnlockDurationMinutes(minutes) }
+    }
+
+    fun resetTodayUsage() {
+        viewModelScope.launch { preferences.clearUsageToday() }
+    }
+
+    // ---------------------------------------------------------------- agendas
+
+    fun setMonitored(packageName: String, monitored: Boolean) {
+        if (!monitored && !_state.value.canRelaxProtection) return
+        updateSchedule(packageName) { it.copy(monitored = monitored) }
+    }
+
+    fun updateDay(packageName: String, dayOfWeek: Int, day: DaySchedule) {
+        updateSchedule(packageName) { it.withDay(dayOfWeek, day) }
+    }
+
+    fun addWindow(packageName: String, dayOfWeek: Int, window: TimeWindow) {
+        if (!window.isValid) return
+        updateSchedule(packageName) { schedule ->
+            schedule.withDay(dayOfWeek, schedule.day(dayOfWeek).withWindow(window))
         }
     }
 
-    fun updateDailyQuotaMinutes(minutes: Int) {
-        viewModelScope.launch {
-            prefs.setDailyQuotaMinutes(minutes)
+    fun removeWindow(packageName: String, dayOfWeek: Int, window: TimeWindow) {
+        updateSchedule(packageName) { schedule ->
+            schedule.withDay(dayOfWeek, schedule.day(dayOfWeek).withoutWindow(window))
         }
     }
 
-    fun toggleAppBlock() {
+    fun copyDayTo(packageName: String, from: Int, targets: List<Int>) {
+        updateSchedule(packageName) { it.copyDay(from, targets) }
+    }
+
+    fun resetSchedule(packageName: String) {
+        updateSchedule(packageName) { it.copy(days = emptyMap()) }
+    }
+
+    private fun updateSchedule(packageName: String, transform: (AppSchedule) -> AppSchedule) {
+        if (!_state.value.canEdit) return
         viewModelScope.launch {
-            prefs.setAppBlockEnabled(!_state.value.appBlockEnabled)
+            val current = preferences.schedule(packageName).first()
+            preferences.saveSchedule(transform(current))
         }
     }
 
-    fun toggleBlocker() {
-        viewModelScope.launch {
-            prefs.setBlockerEnabled(!_state.value.blockerEnabled)
-        }
-    }
-
-    fun updateAppBlockedDays(days: Set<Int>) {
-        viewModelScope.launch {
-            prefs.setAppBlockedDays(days)
-        }
-    }
+    // ---------------------------------------------------------------- senha
 
     fun setPassword(password: String) {
-        val hash = PasswordUtils.hash(password)
+        if (password.length < MIN_PASSWORD_LENGTH) return
         viewModelScope.launch {
-            prefs.setPasswordHash(hash)
-            _state.update { it.copy(hasPassword = true, passwordError = null) }
+            preferences.setPasswordHash(PasswordUtils.hash(password))
+            _state.update { it.copy(hasPassword = true, isUnlocked = true, passwordError = null) }
+            startUnlockTimer()
         }
     }
 
     fun changePassword(currentPassword: String, newPassword: String) {
+        if (newPassword.length < MIN_PASSWORD_LENGTH) return
         viewModelScope.launch {
-            val storedHash = prefs.getPasswordHash().first()
-            if (storedHash != null && PasswordUtils.verify(currentPassword, storedHash)) {
-                val newHash = PasswordUtils.hash(newPassword)
-                prefs.setPasswordHash(newHash)
-                _state.update { it.copy(passwordError = null, passwordChangedSuccessfully = true) }
-            } else {
+            if (!verify(currentPassword)) {
                 _state.update { it.copy(passwordError = "Senha atual incorreta") }
+                return@launch
+            }
+            preferences.setPasswordHash(PasswordUtils.hash(newPassword))
+            _state.update { it.copy(passwordError = null, passwordChangedSuccessfully = true) }
+        }
+    }
+
+    fun removePassword(currentPassword: String) {
+        viewModelScope.launch {
+            if (!verify(currentPassword)) {
+                _state.update { it.copy(passwordError = "Senha incorreta") }
+                return@launch
+            }
+            preferences.clearPasswordHash()
+            unlockJob?.cancel()
+            _state.update {
+                it.copy(hasPassword = false, isUnlocked = false, passwordError = null)
             }
         }
     }
 
     fun unlockWithPassword(password: String) {
         viewModelScope.launch {
-            val storedHash = prefs.getPasswordHash().first()
-            if (storedHash != null && PasswordUtils.verify(password, storedHash)) {
-                _state.update { it.copy(isUnlocked = true, passwordError = null) }
-                startUnlockTimer()
-            } else {
+            if (!verify(password)) {
                 _state.update { it.copy(passwordError = "Senha incorreta") }
+                return@launch
             }
+            _state.update { it.copy(isUnlocked = true, passwordError = null) }
+            startUnlockTimer()
         }
-    }
-
-    fun clearPasswordError() {
-        _state.update { it.copy(passwordError = null) }
     }
 
     fun lockNow() {
@@ -283,32 +357,52 @@ class BlockerViewModel(
         _state.update { it.copy(isUnlocked = false) }
     }
 
+    fun clearPasswordError() {
+        _state.update { it.copy(passwordError = null) }
+    }
+
+    fun consumePasswordChanged() {
+        _state.update { it.copy(passwordChangedSuccessfully = false) }
+    }
+
+    private suspend fun verify(password: String): Boolean {
+        val storedHash = preferences.passwordHash.first() ?: return false
+        return PasswordUtils.verify(password, storedHash)
+    }
+
     private fun startUnlockTimer() {
         unlockJob?.cancel()
         unlockJob = viewModelScope.launch {
-            delay(300_000L)
+            val minutes = _state.value.settings.unlockDurationMinutes
+            delay(minutes * 60_000L)
             _state.update { it.copy(isUnlocked = false) }
         }
     }
+
+    // ---------------------------------------------------------------- device admin
 
     fun activateDeviceAdmin(context: Context) {
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
             putExtra(
                 DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                "Ative o administrador para proteger o app contra desinstalacao sem senha"
+                "Ative o administrador para dificultar a desinstalação do app por impulso.",
             )
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         context.startActivity(intent)
     }
 
-    fun refreshDeviceAdminStatus() {
-        checkDeviceAdmin()
+    fun deactivateDeviceAdmin() {
+        if (!_state.value.canEdit) return
+        runCatching { devicePolicyManager.removeActiveAdmin(adminComponent) }
+            .onFailure { Timber.e(it, "Falha ao remover o administrador do dispositivo") }
+        refreshDeviceAdminStatus()
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        isMonitoring = false
+    fun refreshDeviceAdminStatus() {
+        val isActive = runCatching { devicePolicyManager.isAdminActive(adminComponent) }
+            .getOrDefault(false)
+        _state.update { it.copy(isDeviceAdminActive = isActive) }
     }
 }

@@ -16,7 +16,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            RoutineTrackerTheme {
+            // O app tem identidade visual propria, entao o dynamic color fica desligado.
+            RoutineTrackerTheme(disableDynamicColor = true) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,

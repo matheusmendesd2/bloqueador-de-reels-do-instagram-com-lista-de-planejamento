@@ -1,15 +1,36 @@
 package com.rendox.routineblocker.feature.shortsblocker.ui.screens
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.PhonelinkLock
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.rendox.routineblocker.feature.shortsblocker.ui.components.IconBadge
+import com.rendox.routineblocker.feature.shortsblocker.ui.components.SectionCard
 
 @Composable
 fun ProminentDisclosureScreen(
@@ -19,87 +40,85 @@ fun ProminentDisclosureScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        IconBadge(icon = Icons.Default.Accessibility, size = 72.dp)
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
-            text = "Accessibility Service",
-            style = MaterialTheme.typography.headlineMedium,
+            text = "Permissão de acessibilidade",
+            style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Shorts Blocker needs accessibility access to detect and block short-form video content.",
-            style = MaterialTheme.typography.bodyLarge,
+            text = "É essa permissão que permite ao app perceber quando um Reels ou Short " +
+                "aparece na tela.",
+            style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.height(24.dp))
 
-        DisclosureCard(
-            icon = Icons.Default.Visibility,
-            title = "What This App Uses",
-            description = "This app uses AccessibilityService to detect when YouTube Shorts or Instagram Reels are being displayed."
+        DisclosureItem(
+            icon = Icons.Default.Accessibility,
+            title = "O que o app lê",
+            description = "Apenas a estrutura da tela dos apps que você escolheu monitorar, para " +
+                "identificar telas de vídeo curto.",
         )
-        Spacer(modifier = Modifier.height(12.dp))
-        DisclosureCard(
-            icon = Icons.Default.Info,
-            title = "Why We Need This",
-            description = "The service allows us to identify short-form content and help you stay focused by returning to the main feed."
+        Spacer(modifier = Modifier.height(10.dp))
+        DisclosureItem(
+            icon = Icons.Default.Block,
+            title = "O que o app faz com isso",
+            description = "Aplica as regras que você configurou: sai da tela de Reels ou impede " +
+                "a abertura do app fora do horário.",
         )
-        Spacer(modifier = Modifier.height(12.dp))
-        DisclosureCard(
-            icon = Icons.Default.Lock,
-            title = "Your Privacy",
-            description = "No data is collected, stored, or transmitted. All processing happens locally on your device."
+        Spacer(modifier = Modifier.height(10.dp))
+        DisclosureItem(
+            icon = Icons.Default.PhonelinkLock,
+            title = "Privacidade",
+            description = "Nada é coletado, guardado ou enviado para fora. Todo o processamento " +
+                "acontece no seu aparelho.",
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
-
+        Spacer(modifier = Modifier.height(28.dp))
         Button(onClick = onAgree, modifier = Modifier.fillMaxWidth()) {
-            Text("I Understand and Agree")
+            Text("Entendi, ativar permissão")
         }
-        Spacer(modifier = Modifier.height(8.dp))
         TextButton(onClick = onCancel) {
-            Text("Cancel")
+            Text("Agora não")
         }
     }
 }
 
 @Composable
-private fun DisclosureCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun DisclosureItem(
+    icon: ImageVector,
     title: String,
     description: String,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
+    SectionCard(contentPadding = PaddingValues(16.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(22.dp),
             )
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = description,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

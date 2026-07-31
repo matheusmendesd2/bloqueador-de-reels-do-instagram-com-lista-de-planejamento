@@ -4,65 +4,38 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.rendox.routineblocker.feature.shortsblocker.navigation.shortsBlockerNavigationRoute
-import com.rendox.routineblocker.ui.DashboardScreen
-import com.rendox.routinetracker.addeditroutine.navigation.ADD_ROUTINE_ROUTE
+import com.rendox.routineblocker.ui.HomeScaffold
 import com.rendox.routinetracker.addeditroutine.navigation.addRoutineScreen
 import com.rendox.routinetracker.addeditroutine.navigation.navigateToAddRoutine
 import com.rendox.routinetracker.feature.agenda.navigation.AGENDA_NAV_ROUTE
 import com.rendox.routinetracker.feature.agenda.navigation.agendaScreen
-import com.rendox.routinetracker.feature.agenda.navigation.navigateToAgenda
-import com.rendox.routinetracker.routinedetails.navigation.ROUTINE_DETAILS_ROUTE
 import com.rendox.routinetracker.routinedetails.navigation.navigateToRoutineDetails
 import com.rendox.routinetracker.routinedetails.navigation.routineDetailsScreen
 
 @Composable
-fun RoutineBlockerNavHost(
-    navController: NavHostController = rememberNavController(),
-    modifier: Modifier = Modifier,
-) {
-    NavHost(
-        navController = navController,
-        startDestination = "dashboard",
+fun RoutineBlockerNavHost(modifier: Modifier = Modifier) {
+    HomeScaffold(
         modifier = modifier,
-    ) {
-        composable("dashboard") {
-            DashboardScreen(
-                onOpenRoutineTracker = { navController.navigate("routinetracker") },
-                onOpenShortsBlocker = { navController.navigate("shortsblocker") },
-            )
-        }
-        composable("routinetracker") {
-            RoutineTrackerNavHost(
-                startDestination = AGENDA_NAV_ROUTE,
-            )
-        }
-        composable("shortsblocker") {
-            shortsBlockerNavigationRoute()
-        }
-    }
+        routineTrackerContent = { contentModifier ->
+            RoutineTrackerNavHost(modifier = contentModifier)
+        },
+    )
 }
 
 @Composable
 private fun RoutineTrackerNavHost(
-    startDestination: String,
-    navController: NavHostController = rememberNavController(),
     modifier: Modifier = Modifier,
+    navController: NavHostController = rememberNavController(),
 ) {
     NavHost(
         navController = navController,
-        startDestination = startDestination,
+        startDestination = AGENDA_NAV_ROUTE,
         modifier = modifier,
     ) {
         agendaScreen(
-            onRoutineClick = { routineId ->
-                navController.navigateToRoutineDetails(routineId)
-            },
-            onAddRoutineClick = {
-                navController.navigateToAddRoutine()
-            },
+            onRoutineClick = { routineId -> navController.navigateToRoutineDetails(routineId) },
+            onAddRoutineClick = { navController.navigateToAddRoutine() },
         )
         routineDetailsScreen(
             popBackStack = { navController.popBackStack() },

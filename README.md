@@ -8,10 +8,11 @@ Eu sou desenvolvedor Android e pensei: já que o problema é digital, a soluçã
 
 ## O que faz
 
-**Bloqueio inteligente de conteúdo curto:**
-- Detecta quando você está assistindo **Reels do Instagram** ou **Shorts do YouTube** usando o Serviço de Acessibilidade do Android
-- Aplica regras configuráveis: cota diária de minutos, dias da semana com bloqueio parcial ou total, e até bloqueio completo de abertura do app
-- **Chave geral** — desliga todo o bloqueio sem perder suas configurações
+**Agenda semanal de bloqueio (por app, por dia, por horário):**
+- Para cada app monitorado (Instagram e YouTube), cada dia da semana tem sua própria regra
+- **Abertura do app:** liberada o dia todo, bloqueada o dia todo, ou liberada só em faixas de horário — quantas faixas você quiser por dia
+- **Reels/Shorts:** bloqueados, liberados, ou liberados até uma cota de minutos definida para aquele dia
+- Exemplo real: Instagram só abre de 18:00 às 20:00 na terça, não abre de jeito nenhum na quarta, e no sábado abre o dia todo com 30 min de Reels
 
 **Planejador de hábitos completo (RoutineTracker):**
 - Criação de rotinas personalizadas com schedules variados (diário, semanal, mensal, dias alternados)
@@ -22,27 +23,43 @@ Eu sou desenvolvedor Android e pensei: já que o problema é digital, a soluçã
 
 | Funcionalidade | Descrição |
 |---|---|
-| **Cota diária por app** | Limite de minutos para Reels e Shorts separadamente |
-| **Dias de bloqueio** | Escolha quais dias da semana aplicar a cota ou bloquear totalmente |
-| **App Block** | Bloqueia abertura do Instagram em dias selecionados |
-| **Chave geral (master toggle)** | Ativa/desativa todo o bloqueio sem perder configurações |
-| **Proteção por senha** | Impede alterações nas configurações do bloqueador (SHA-256) |
-| **Device Admin** | Dificulta a desinstalação direta — exige desativação como admin primeiro |
+| **Agenda por dia da semana** | Cada dia tem sua própria configuração, independente dos outros |
+| **Faixas de horário** | Várias janelas por dia; faixas encostadas ou sobrepostas são unidas automaticamente |
+| **Cota diária por dia** | Limite de minutos de Reels/Shorts diferente para cada dia da semana |
+| **Contagem por app** | Instagram e YouTube têm contadores de consumo separados |
+| **Copiar configuração** | Aplica o dia atual em todos os dias, só nos dias úteis ou só no fim de semana |
+| **Chave geral** | Liga e desliga toda a proteção sem perder nenhuma configuração |
+| **Pausa temporária** | Pausa de 15, 30, 60 ou 120 minutos com contagem regressiva |
+| **Ação ao bloquear** | Voltar uma tela (sai do Reels) ou ir direto para a tela inicial |
+| **Aviso personalizado** | Mensagem própria exibida no momento do bloqueio |
+| **Modo rígido** | Impede desligar ou pausar enquanto um bloqueio de horário está valendo |
+| **Proteção por senha** | Trava as configurações (SHA-256), com tempo de desbloqueio configurável |
+| **Device Admin** | Dificulta a desinstalação por impulso — pode ser ativado e desativado pelo app |
 | **Planejador de rotinas** | Crie hábitos, acompanhe streaks, visualize calendário de conclusões |
 
 ## Como funciona (tecnicamente)
 
 ### Arquitetura
 - **Multi-module** com convention plugins do Gradle para reuso de configuração
-- **Koin** para injeção de dependência (17 módulos)
+- **Koin** para injeção de dependência
 - **SQLDelight** para persistência local dos dados de hábitos e streaks
-- **DataStore Preferences** para configurações do bloqueador (dias, cota, senha, etc.)
+- **DataStore Preferences** para as agendas e configurações do bloqueador
 
 ### Bloqueio (feature/shortsblocker)
 - Um `AccessibilityService` monitora a janela ativa do Android
+- As regras vivem em `models/BlockRules.kt`: `AppSchedule` (um app) → `DaySchedule` (um dia) → `TimeWindow` (uma faixa de horário). A avaliação é pura, sem dependência de Android, e coberta por testes
+- A agenda é serializada por `utils/ScheduleCodec.kt` em uma string compacta por app, sem precisar de biblioteca de serialização
+- O serviço avalia duas camadas em ordem: primeiro a **abertura do app** (dia bloqueado ou fora da janela), depois o **conteúdo curto** (política do dia e cota consumida)
 - Detectores específicos (`InstagramReelsDetector`, `YouTubeShortsDetector`) identificam quando uma tela de conteúdo curto está aberta
-- O heartbeat do serviço incrementa o contador de minutos usado a cada 60s enquanto o usuário está em um Reels/Shorts permitido
-- Quando a cota do dia é atingida, o serviço executa `GLOBAL_ACTION_BACK` para forçar a saída
+- Um heartbeat a cada 20s conta os minutos consumidos e reavalia a agenda — é ele que tira o usuário do app quando a janela de horário termina, mesmo sem novos eventos de acessibilidade
+- Ao bloquear, o serviço executa `GLOBAL_ACTION_BACK` ou `GLOBAL_ACTION_HOME`, conforme a configuração
+
+### Interface
+- Barra inferior com duas seções: **Bloqueio** e **Planejamento** (a antiga tela intermediária de escolha foi removida)
+- Tela inicial do bloqueio: estado da proteção, pausa rápida e um cartão por app com o que está valendo agora
+- Tela de agenda por app: seletor de dia, editor do dia e resumo da semana inteira
+- Tela de ajustes: ação ao bloquear, aviso, senha, modo rígido, device admin e serviço
+- Tema próprio (indigo + verde-água), cantos arredondados e suporte a modo claro/escuro
 
 ### Planejador (features agenda, addeditroutine, routinedetails)
 - Baseado no projeto **RoutineTracker**
@@ -51,8 +68,11 @@ Eu sou desenvolvedor Android e pensei: já que o problema é digital, a soluçã
 
 ### Segurança
 - Senha armazenada como hash SHA-256 no DataStore
-- Desbloqueio dura 5 minutos, após o qual as configurações são travadas novamente
+- O desbloqueio dura 1, 5, 15 ou 30 minutos (configurável), depois as configurações travam de novo
 - `AdminReceiver` (DeviceAdminReceiver) registrado no AndroidManifest com política de dispositivo
+
+### Migração
+Quem já usava a versão anterior não perde nada: as configurações antigas (dias liberados, cota única, dias de bloqueio total) são convertidas automaticamente para a agenda semanal na primeira abertura.
 
 ## Como buildar
 
@@ -61,6 +81,12 @@ Eu sou desenvolvedor Android e pensei: já que o problema é digital, a soluçã
 ```
 
 O APK gerado estará em `app/build/outputs/apk/debug/app-debug.apk`.
+
+Para rodar os testes das regras de bloqueio:
+
+```bash
+./gradlew.bat :feature:shortsblocker:testDebugUnitTest
+```
 
 **Pré-requisitos:**
 - Android Studio (recomendado)
