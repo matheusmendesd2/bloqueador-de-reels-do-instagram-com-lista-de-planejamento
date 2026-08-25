@@ -11,7 +11,8 @@ import com.rendox.routineblocker.feature.shortsblocker.models.TimeWindow
  */
 data class BlockerActions(
     val setProtectionEnabled: (Boolean) -> Unit = {},
-    val pauseFor: (Int) -> Unit = {},
+    val disableProtection: (String) -> Unit = {},
+    val useEmergencyUnlock: () -> Unit = {},
     val cancelPause: () -> Unit = {},
     val setBlockAction: (BlockAction) -> Unit = {},
     val setShowBlockWarning: (Boolean) -> Unit = {},

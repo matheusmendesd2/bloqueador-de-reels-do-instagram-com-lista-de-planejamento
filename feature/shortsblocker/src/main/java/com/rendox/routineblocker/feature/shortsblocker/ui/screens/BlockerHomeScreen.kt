@@ -4,8 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,7 +25,6 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -71,6 +68,7 @@ fun BlockerHomeScreen(
     onOpenAppSchedule: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onUnlockRequest: () -> Unit,
+    onUnlockProtectionRequest: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -139,7 +137,8 @@ fun BlockerHomeScreen(
             ProtectionCard(
                 state = state,
                 onToggleProtection = actions.setProtectionEnabled,
-                onPause = actions.pauseFor,
+                onUnlockProtectionRequest = onUnlockProtectionRequest,
+                onEmergencyUnlock = actions.useEmergencyUnlock,
                 onCancelPause = actions.cancelPause,
             )
 
@@ -193,7 +192,8 @@ fun BlockerHomeScreen(
 private fun ProtectionCard(
     state: BlockerUiState,
     onToggleProtection: (Boolean) -> Unit,
-    onPause: (Int) -> Unit,
+    onUnlockProtectionRequest: () -> Unit,
+    onEmergencyUnlock: () -> Unit,
     onCancelPause: () -> Unit,
 ) {
     val active = state.isProtectionActiveNow
@@ -240,7 +240,13 @@ private fun ProtectionCard(
             }
             Switch(
                 checked = state.settings.protectionEnabled,
-                onCheckedChange = onToggleProtection,
+                onCheckedChange = { enabled ->
+                    if (!enabled && state.isLocked) {
+                        onUnlockProtectionRequest()
+                    } else {
+                        onToggleProtection(enabled)
+                    }
+                },
                 enabled = state.settings.protectionEnabled || state.canRelaxProtection,
             )
         }
@@ -248,8 +254,8 @@ private fun ProtectionCard(
         if (!state.canRelaxProtection) {
             Spacer(modifier = Modifier.height(14.dp))
             HintBanner(
-                text = "Modo rígido: não dá para desligar ou pausar enquanto um bloqueio de " +
-                    "horário está valendo.",
+                text = "Modo rígido: não dá para desligar a proteção enquanto um bloqueio de " +
+                    "horário está valendo. A liberação de emergência segue disponível 1x por dia.",
                 icon = Icons.Default.Lock,
                 container = MaterialTheme.colorScheme.errorContainer,
                 onContainer = MaterialTheme.colorScheme.onErrorContainer,
@@ -271,32 +277,36 @@ private fun ProtectionCard(
         }
 
         AnimatedVisibility(
-            visible = state.settings.protectionEnabled && !state.isPaused &&
-                state.canRelaxProtection,
+            visible = state.settings.protectionEnabled && !state.isPaused,
         ) {
             Column {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "Pausar por",
+                    text = "Emergência",
                     style = MaterialTheme.typography.labelLarge,
                     color = onContainer,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                PauseOptions(onPause = onPause)
+                Button(
+                    onClick = onEmergencyUnlock,
+                    enabled = state.canUseEmergencyUnlock,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Liberar por ${formatDuration(BlockerSettings.EMERGENCY_UNLOCK_MINUTES)}",
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (state.emergencyUnlockUsedToday) {
+                        "Já usado hoje. Volta amanhã."
+                    } else {
+                        "Disponível uma vez por dia, sem senha."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onContainer,
+                )
             }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
-@Composable
-private fun PauseOptions(onPause: (Int) -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        BlockerSettings.PAUSE_DURATION_OPTIONS.forEach { minutes ->
-            AssistChip(
-                onClick = { onPause(minutes) },
-                label = { Text(formatDuration(minutes)) },
-            )
         }
     }
 }

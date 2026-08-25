@@ -42,6 +42,7 @@ data class BlockerUiState(
     val passwordError: String? = null,
     val passwordChangedSuccessfully: Boolean = false,
     val isDeviceAdminActive: Boolean = false,
+    val emergencyUnlockUsedToday: Boolean = false,
     val today: Int = LocalDate.now().dayOfWeek.value,
     val minuteOfDay: Int = 0,
     val nowEpochMillis: Long = 0L,
@@ -86,6 +87,10 @@ data class BlockerUiState(
     /** Pode editar configuracoes agora? */
     val canEdit: Boolean
         get() = !isLocked
+
+    /** A liberacao de emergencia esta disponivel agora? (1x por dia, sem senha) */
+    val canUseEmergencyUnlock: Boolean
+        get() = !emergencyUnlockUsedToday && settings.protectionEnabled && !isPaused
 }
 
 class BlockerViewModel(
@@ -151,6 +156,11 @@ class BlockerViewModel(
                         isUnlocked = if (hash == null) false else current.isUnlocked,
                     )
                 }
+            }
+        }
+        viewModelScope.launch {
+            preferences.emergencyUnlockUsedToday.collect { used ->
+                _state.update { it.copy(emergencyUnlockUsedToday = used) }
             }
         }
     }
@@ -220,17 +230,42 @@ class BlockerViewModel(
     // ---------------------------------------------------------------- protecao
 
     fun setProtectionEnabled(enabled: Boolean) {
-        if (!enabled && !_state.value.canRelaxProtection) {
-            Timber.d("Modo rigido impede desligar a protecao agora")
-            return
+        if (!enabled) {
+            if (_state.value.isLocked) {
+                Timber.d("Desligar a protecao exige a senha")
+                return
+            }
+            if (!_state.value.canRelaxProtection) {
+                Timber.d("Modo rigido impede desligar a protecao agora")
+                return
+            }
         }
         viewModelScope.launch { preferences.setProtectionEnabled(enabled) }
     }
 
-    fun pauseFor(minutes: Int) {
-        if (!_state.value.canRelaxProtection) return
+    /** Desliga a protecao depois de confirmar a senha salva. */
+    fun disableProtectionWithPassword(password: String) {
         viewModelScope.launch {
-            preferences.pauseUntil(System.currentTimeMillis() + minutes * 60_000L)
+            if (!verify(password)) {
+                _state.update { it.copy(passwordError = "Senha incorreta") }
+                return@launch
+            }
+            if (!_state.value.canRelaxProtection) {
+                _state.update {
+                    it.copy(passwordError = "Modo rígido ativo: não dá para desligar agora.")
+                }
+                return@launch
+            }
+            preferences.setProtectionEnabled(false)
+            _state.update { it.copy(passwordError = null) }
+        }
+    }
+
+    /** Liberacao de emergencia: flexibiliza as regras por 5 min, sem senha, 1x por dia. */
+    fun useEmergencyUnlock() {
+        if (!_state.value.canUseEmergencyUnlock) return
+        viewModelScope.launch {
+            preferences.useEmergencyUnlock(BlockerSettings.EMERGENCY_UNLOCK_MINUTES)
         }
     }
 

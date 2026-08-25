@@ -21,6 +21,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.rendox.routineblocker.feature.shortsblocker.ui.BlockerActions
 import com.rendox.routineblocker.feature.shortsblocker.ui.components.ChangePasswordDialog
+import com.rendox.routineblocker.feature.shortsblocker.ui.components.DisableProtectionDialog
 import com.rendox.routineblocker.feature.shortsblocker.ui.components.RemovePasswordDialog
 import com.rendox.routineblocker.feature.shortsblocker.ui.components.SetPasswordDialog
 import com.rendox.routineblocker.feature.shortsblocker.ui.components.UnlockDialog
@@ -38,7 +39,7 @@ private const val SETTINGS_ROUTE = "blocker/settings"
 private const val SCHEDULE_ROUTE = "blocker/schedule"
 private const val PACKAGE_ARG = "packageName"
 
-private enum class PasswordDialog { NONE, SET, UNLOCK, CHANGE, REMOVE }
+private enum class PasswordDialog { NONE, SET, UNLOCK, UNLOCK_PROTECTION, CHANGE, REMOVE }
 
 /** Ponto de entrada da feature de bloqueio. */
 @Composable
@@ -66,7 +67,8 @@ fun ShortsBlockerFeature(modifier: Modifier = Modifier) {
     val actions = remember(viewModel, context) {
         BlockerActions(
             setProtectionEnabled = viewModel::setProtectionEnabled,
-            pauseFor = viewModel::pauseFor,
+            disableProtection = viewModel::disableProtectionWithPassword,
+            useEmergencyUnlock = viewModel::useEmergencyUnlock,
             cancelPause = viewModel::cancelPause,
             setBlockAction = viewModel::setBlockAction,
             setShowBlockWarning = viewModel::setShowBlockWarning,
@@ -120,6 +122,7 @@ fun ShortsBlockerFeature(modifier: Modifier = Modifier) {
                 },
                 onOpenSettings = { navController.navigate(SETTINGS_ROUTE) },
                 onUnlockRequest = { passwordDialog = PasswordDialog.UNLOCK },
+                onUnlockProtectionRequest = { passwordDialog = PasswordDialog.UNLOCK_PROTECTION },
             )
         }
         composable(
@@ -167,6 +170,14 @@ fun ShortsBlockerFeature(modifier: Modifier = Modifier) {
                 actions.clearPasswordError()
             },
         )
+        PasswordDialog.UNLOCK_PROTECTION -> DisableProtectionDialog(
+            error = state.passwordError,
+            onConfirm = actions.disableProtection,
+            onDismiss = {
+                passwordDialog = PasswordDialog.NONE
+                actions.clearPasswordError()
+            },
+        )
         PasswordDialog.CHANGE -> ChangePasswordDialog(
             error = state.passwordError,
             onConfirm = actions.changePassword,
@@ -188,6 +199,13 @@ fun ShortsBlockerFeature(modifier: Modifier = Modifier) {
     // Fecha o dialogo assim que a acao correspondente da certo.
     LaunchedEffect(state.isUnlocked) {
         if (state.isUnlocked && passwordDialog == PasswordDialog.UNLOCK) {
+            passwordDialog = PasswordDialog.NONE
+        }
+    }
+    LaunchedEffect(state.settings.protectionEnabled) {
+        if (!state.settings.protectionEnabled &&
+            passwordDialog == PasswordDialog.UNLOCK_PROTECTION
+        ) {
             passwordDialog = PasswordDialog.NONE
         }
     }

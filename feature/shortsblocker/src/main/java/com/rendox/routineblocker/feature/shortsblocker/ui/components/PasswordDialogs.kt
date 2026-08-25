@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +71,37 @@ fun SetPasswordDialog(
             value = confirmation,
             onValueChange = { confirmation = it },
             label = "Repita a senha",
+            visible = visible,
+            onToggleVisibility = { visible = !visible },
+        )
+    }
+}
+
+/** Dialogo para desligar a protecao, confirmando a senha salva. */
+@Composable
+fun DisableProtectionDialog(
+    error: String?,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var visible by remember { mutableStateOf(false) }
+
+    PasswordDialogScaffold(
+        icon = Icons.Default.Warning,
+        title = "Desativar proteção",
+        description = "Digite a senha para desligar a proteção. " +
+            "Nenhuma regra será aplicada até você reativar.",
+        error = error,
+        confirmLabel = "Desativar",
+        confirmEnabled = password.isNotEmpty(),
+        onConfirm = { onConfirm(password) },
+        onDismiss = onDismiss,
+    ) {
+        PasswordField(
+            value = password,
+            onValueChange = { password = it },
+            label = "Senha",
             visible = visible,
             onToggleVisibility = { visible = !visible },
         )

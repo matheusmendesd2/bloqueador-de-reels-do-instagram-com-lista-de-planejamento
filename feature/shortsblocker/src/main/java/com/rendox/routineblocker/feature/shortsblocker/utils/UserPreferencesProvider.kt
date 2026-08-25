@@ -50,6 +50,7 @@ class UserPreferencesProvider(context: Context) {
     private val strictModeKey = booleanPreferencesKey("strict_mode")
     private val unlockDurationKey = intPreferencesKey("unlock_duration_minutes")
     private val pausedUntilKey = longPreferencesKey("paused_until_millis")
+    private val emergencyUnlockDateKey = stringPreferencesKey("emergency_unlock_date")
 
     private val usageDateKey = stringPreferencesKey("usage_date")
     private val migratedKey = booleanPreferencesKey("migrated_to_schedules")
@@ -149,13 +150,25 @@ class UserPreferencesProvider(context: Context) {
         dataStore.edit { it[unlockDurationKey] = minutes.coerceIn(1, 60) }
     }
 
-    suspend fun pauseUntil(epochMillis: Long) {
-        dataStore.edit { it[pausedUntilKey] = epochMillis }
-    }
-
     suspend fun cancelPause() {
         dataStore.edit { it[pausedUntilKey] = 0L }
     }
+
+    /**
+     * Liberacao de emergencia: pausa as regras por [durationMinutes] sem pedir senha
+     * e registra o dia em que foi usada. So pode ser usada uma vez por dia.
+     */
+    suspend fun useEmergencyUnlock(durationMinutes: Int) {
+        dataStore.edit { prefs ->
+            prefs[pausedUntilKey] = System.currentTimeMillis() + durationMinutes * 60_000L
+            prefs[emergencyUnlockDateKey] = LocalDate.now().toString()
+        }
+    }
+
+    /** A liberacao de emergencia ja foi usada hoje? */
+    val emergencyUnlockUsedToday: Flow<Boolean> = preferences.map { prefs ->
+        prefs[emergencyUnlockDateKey] == LocalDate.now().toString()
+    }.distinctUntilChanged()
 
     // ---------------------------------------------------------------- consumo do dia
 

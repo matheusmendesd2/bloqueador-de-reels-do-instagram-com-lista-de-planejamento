@@ -212,7 +212,9 @@ data class BlockerSettings(
     companion object {
         const val DEFAULT_BLOCK_MESSAGE = "Bloqueado pelo seu plano de foco."
         val UNLOCK_DURATION_OPTIONS = listOf(1, 5, 15, 30)
-        val PAUSE_DURATION_OPTIONS = listOf(15, 30, 60, 120)
+
+        /** Duracao, em minutos, da liberacao de emergencia. */
+        const val EMERGENCY_UNLOCK_MINUTES = 5
     }
 }
 
