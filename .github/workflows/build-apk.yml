@@ -24,7 +24,7 @@ jobs:
         run: ./gradlew :app:assembleDebug --no-daemon
 
       - name: Publicar APK como artefato
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: routineblocker-debug
           path: app/build/outputs/apk/debug/app-debug.apk
