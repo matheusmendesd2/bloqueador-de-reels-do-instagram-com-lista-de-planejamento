@@ -13,6 +13,11 @@ internal fun Project.configureKotlinAndroid(
     commonExtension.apply {
         compileSdk = 34
 
+        // O desugaring de bibliotecas exige multidex habilitado.
+        defaultConfig {
+            multiDexEnabled = true
+        }
+
         compileOptions {
             sourceCompatibility = JavaVersion.VERSION_11
             targetCompatibility = JavaVersion.VERSION_17
