@@ -3,7 +3,6 @@ package com.rendox.routineblocker.buildlogic
 import com.android.build.api.dsl.CommonExtension
 import org.gradle.api.JavaVersion
 import org.gradle.api.Project
-import org.gradle.kotlin.dsl.dependencies
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
 
@@ -13,22 +12,12 @@ internal fun Project.configureKotlinAndroid(
     commonExtension.apply {
         compileSdk = 34
 
-        // O desugaring de bibliotecas exige multidex habilitado.
-        defaultConfig {
-            multiDexEnabled = true
-        }
-
         compileOptions {
             sourceCompatibility = JavaVersion.VERSION_11
             targetCompatibility = JavaVersion.VERSION_17
-            // java.time e usado no bloqueador e o minSdk e 24, entao o desugaring
-            // precisa estar ligado de verdade - nao basta declarar a dependencia.
-            isCoreLibraryDesugaringEnabled = true
+            // O desugaring de core library (java.time) fica habilitado so no modulo :app,
+            // onde o dexing final acontece - ver app/build.gradle.kts.
         }
-    }
-
-    dependencies {
-        add("coreLibraryDesugaring", libs.findLibrary("android.tools.desugar").get())
     }
 }
 

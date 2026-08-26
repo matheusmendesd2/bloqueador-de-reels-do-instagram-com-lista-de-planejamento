@@ -14,11 +14,18 @@ android {
     defaultConfig {
         applicationId = "com.rendox.routineblocker"
         minSdk = 24
+        multiDexEnabled = true
         versionCode = 1
         versionName = "1.0.0"
         vectorDrawables {
             useSupportLibrary = true
         }
+    }
+
+    compileOptions {
+        // java.time e usado no bloqueador e o minSdk e 24, entao o desugaring precisa
+        // estar habilitado onde o dexing final acontece (somente no modulo :app).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildTypes {
@@ -51,6 +58,8 @@ dependencies {
     implementation(project(":feature:agenda"))
     implementation(project(":feature:routinedetails"))
     implementation(project(":feature:shortsblocker"))
+
+    coreLibraryDesugaring(libs.android.tools.desugar)
 
     implementation(libs.jetbrains.kotlinx.datetime)
     implementation(libs.androidx.core.splashscreen)
